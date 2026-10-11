@@ -10,8 +10,11 @@ name: Release
 # release label from the PR whose merge produced the pushed commit.
 #
 # The version is compiled into the binary, so the bump comes first: the bump
-# job commits and tags the new version, the build matrix builds that tag for
-# every target, and the release job publishes what was built.
+# job commits and tags the new version locally, the build matrix builds and
+# tests that commit for every target, and only then does the push job hand
+# the commit to main and the tag to the repository - a build that fails for
+# real leaves both untouched, so no tag and no version on main ever names a
+# release that did not happen. The release job publishes what was built.
 on:
   push:
     branches:
@@ -56,32 +59,43 @@ jobs:
           esac
           echo "level=$level" >> "$GITHUB_OUTPUT"
 
-  # This job holds the app key for pushing to main and in exchange executes no
-  # repository-controlled code: the version arithmetic and every file edit are
-  # plain shell, each edit verified so a reshaped file fails the release
-  # instead of shipping a half-bumped tree.
+  # The version arithmetic and every file edit are plain shell, each edit
+  # verified so a reshaped file fails the release instead of shipping a
+  # half-bumped tree. The commit and tag stay in this job's clone and travel
+  # on as a bundle: nothing reaches the repository before every target built
+  # them, which is why this job can do without write access.
   bump:
     name: Bump version and tag
     needs: gate
     if: needs.gate.outputs.level != ''
     runs-on: ubuntu-26.04
     permissions:
-      contents: read # the push below uses the app token, not GITHUB_TOKEN
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      parent: ${{ steps.version.outputs.parent }}
+      commit: ${{ steps.version.outputs.commit }}
+      author-name: ${{ steps.version.outputs.author-name }}
+      author-email: ${{ steps.version.outputs.author-email }}
     steps:
-      # "Re-run all jobs" after a successful bump would bump the release commit again.
+      # "Re-run all jobs" once this run's release commit reached main would
+      # release the merge a second time. Before that - a build that failed
+      # for real - re-running all jobs is the recovery: merge the fix, then
+      # re-run, and the bump releases the tip of main, fix included, under
+      # the very version that failed (Cargo.toml on main never moved).
       - name: Refuse to release this merge twice
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
         run: |
-          # The API rather than git log: the depth-1 checkout has no parents.
-          read -r parent subject < <(gh api "repos/$REPO/commits/main" \
-            --jq '"\(.parents[0].sha) \(.commit.message | split("\n")[0])"')
-          if [[ "$subject" == "release: v"* && "$parent" == "$SHA" ]]; then
-            echo "::error::Already released as ${subject#release: } - use \"Re-run failed jobs\"."
+          # The API rather than git log: the depth-1 checkout has no history.
+          # A release commit among the commits main gained since this merge
+          # already shipped it - this run's or a later one's.
+          released=$(gh api "repos/$REPO/compare/$SHA...main" \
+            --jq '[.commits[].commit.message | split("\n")[0] | select(startswith("release: v"))] | first // empty')
+          if [ -n "$released" ]; then
+            echo "::error::This merge already shipped as ${released#release: } - use \"Re-run failed jobs\" to finish that release."
             exit 1
           fi
 
@@ -95,17 +109,15 @@ jobs:
           ref: main
           persist-credentials: false
 
-      # main is protected by a ruleset that GITHUB_TOKEN cannot bypass; the
-      # release app is on the ruleset's bypass list, so its token may push the
-      # bump commit directly. The bypass follows the app, not the token's
-      # permissions, so the token carries only what the push needs.
+      # Only for the app's identity: the commit is authored here, but pushed
+      # by the push job, so this token needs no write access.
       - name: Create GitHub App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          permission-contents: write
+          permission-contents: read
 
       # Author the bump commit as the release app's bot user so it shows the
       # app's name and avatar. GitHub resolves the identity from the author
@@ -116,10 +128,17 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           LEVEL: ${{ needs.gate.outputs.level }}
+          REPO: ${{ github.repository }}
         run: |
           bot_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
-          git config user.name "${APP_SLUG}[bot]"
-          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          author_name="${APP_SLUG}[bot]"
+          author_email="${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git config user.name "$author_name"
+          git config user.email "$author_email"
+          echo "author-name=${author_name}" >> "$GITHUB_OUTPUT"
+          echo "author-email=${author_email}" >> "$GITHUB_OUTPUT"
+          # The tip the builds check out and the release commit's parent.
+          echo "parent=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
           current=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
           IFS=. read -r major minor patch <<< "$current"
@@ -135,6 +154,16 @@ jobs:
               ;;
           esac
           echo "Bumping ${current} -> ${version} (${LEVEL})"
+
+          # The push job would refuse an existing tag, but only after every
+          # build; an existing tag is known now.
+          if gh api "repos/$REPO/git/ref/tags/v${version}" --silent 2> "$RUNNER_TEMP/ref-error"; then
+            echo "::error::Tag v${version} already exists; the bump from ${current} has nowhere to go."
+            exit 1
+          elif ! grep -q "HTTP 404" "$RUNNER_TEMP/ref-error"; then
+            cat "$RUNNER_TEMP/ref-error" >&2
+            exit 1
+          fi
 
           # Cargo.toml carries the version once, at the top of [package];
           # Cargo.lock in the package's own [[package]] block.
@@ -179,41 +208,45 @@ jobs:
           test "$(sed -n 's|^version: ||p' CITATION.cff)" = "\"$version\""
           test "$(sed -n 's|^date-released: ||p' CITATION.cff)" = "\"$released\""
 
-          # The skip-checks trailer stops the bump push from creating runs of
-          # the push-triggered workflows, which have nothing to do on this
-          # commit: CI verified this tree on the merge push moments ago, and
-          # this workflow itself would only log a skipped run. The trailer
-          # lives in the commit body, keeping the subject a clean
-          # "release: vX.Y.Z". GitHub only honors it after two empty lines,
-          # which git's default message cleanup would collapse into one -
-          # hence verbatim.
+          # The skip-checks trailer stops the push of this commit from
+          # creating runs of the push-triggered workflows, which have nothing
+          # to do on it: CI verified this tree on the merge push, and this
+          # workflow itself would only log a skipped run. The trailer lives in
+          # the commit body, keeping the subject a clean "release: vX.Y.Z".
+          # GitHub only honors it after two empty lines, which git's default
+          # message cleanup would collapse into one - hence verbatim.
           git config commit.cleanup verbatim
           git add Cargo.toml Cargo.lock npm CITATION.cff
           git commit -m "release: v${version}"$'\n\n\n'"skip-checks: true"
-          # Annotated, because the push below uses --follow-tags, which skips
-          # lightweight tags.
           git tag -a "v${version}" -m "release: v${version}"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      # The checkout above holds no credentials, so this push authenticates
-      # explicitly with the app token. If a merge lands between the checkout
-      # and here, the push is rejected as non-fast-forward and the run fails
-      # cleanly before anything was published: re-run all jobs to bump and
-      # release the new tip. --atomic makes that hold for the tag too: git
-      # otherwise pushes each ref on its own, so the tag would land on a commit
-      # main never received, and a re-run would move main on while the tag
-      # stayed on that commit - the build checks out the tag.
-      - name: Push bump commit and tag
+      # The commit and tag objects themselves, not a recipe for them: a
+      # recreated commit would carry other timestamps and so another id. The
+      # bundle holds only what the parent lacks, which every later job
+      # fetches from main.
+      - name: Bundle the release commit and tag
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          REPO: ${{ github.repository }}
-        run: git push --atomic "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" HEAD:main --follow-tags
+          PARENT: ${{ steps.version.outputs.parent }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: git bundle create "$RUNNER_TEMP/release.bundle" "${PARENT}..HEAD" "refs/tags/v${VERSION}"
+
+      # Kept as long as the run can be re-run (30 days), like the binaries.
+      # overwrite: "Re-run all jobs" bumps afresh and bundles another commit.
+      - name: Upload the release commit
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-commit
+          path: ${{ runner.temp }}/release.bundle
+          retention-days: 30
+          overwrite: true
 
   # Everything that executes repository-controlled code (the tests, the build)
   # runs here, in jobs that hold no secrets and no id-token permission:
   # nothing these jobs execute can reach the release credentials or the OIDC
-  # token exchanges. They build the tag the bump job pushed, so every binary
-  # reports the released version.
+  # token exchanges. They build the release commit from the bump job's
+  # bundle, so every binary reports the released version.
   build:
     name: Build ${{ matrix.target }}
     needs: bump
@@ -256,11 +289,29 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout the released tag
+      # The release commit is not in the repository yet: check out its
+      # parent, which main has, and lay the bundled commit on top.
+      - name: Checkout the release commit's parent
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: v${{ needs.bump.outputs.version }}
+          ref: ${{ needs.bump.outputs.parent }}
           persist-credentials: false
+
+      - name: Download the release commit
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-commit
+          path: ${{ runner.temp }}/release-commit
+
+      - name: Check out the release commit
+        shell: bash
+        env:
+          VERSION: ${{ needs.bump.outputs.version }}
+          COMMIT: ${{ needs.bump.outputs.commit }}
+        run: |
+          git fetch "$RUNNER_TEMP/release-commit/release.bundle" "refs/tags/v${VERSION}:refs/tags/v${VERSION}"
+          git checkout --detach "v${VERSION}"
+          test "$(git rev-parse HEAD)" = "$COMMIT"
 
       - name: Add the target
         shell: bash
@@ -326,13 +377,102 @@ jobs:
       # Kept as long as the run can be re-run (30 days): a retried release job
       # must publish these very bytes - a rebuild is not guaranteed to be
       # byte-identical, and the publish guards refuse anything that differs
-      # from what an earlier attempt already published.
+      # from what an earlier attempt already published. overwrite: after
+      # "Re-run all jobs", the binaries of the new release commit replace
+      # those of the attempt that failed.
       - name: Upload the packaged binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: asset-${{ matrix.target }}
           path: assets/*
           retention-days: 30
+          overwrite: true
+
+  # The only job that writes to the repository, and it runs only after every
+  # target built and tested the release commit. It pushes the very commit
+  # and tag the builds checked out, taken from the bundle. The bypass of
+  # main's ruleset follows the release app, not the token's permissions, so
+  # the token carries only what the push needs.
+  push:
+    name: Push release commit and tag
+    needs: [bump, build]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read # the push uses the app token, not GITHUB_TOKEN
+    steps:
+      # Full history: if main moved on during the builds, the release commit
+      # is merged into it, which needs their merge base.
+      - name: Checkout main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the release commit
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-commit
+          path: ${{ runner.temp }}/release-commit
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      # --atomic: main and the tag land together or not at all, so a tag on
+      # the repository always means main has its commit - which is what lets
+      # a re-run skip the push once the tag is there.
+      - name: Push the release commit and tag
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.bump.outputs.version }}
+          PARENT: ${{ needs.bump.outputs.parent }}
+          COMMIT: ${{ needs.bump.outputs.commit }}
+          AUTHOR_NAME: ${{ needs.bump.outputs.author-name }}
+          AUTHOR_EMAIL: ${{ needs.bump.outputs.author-email }}
+        run: |
+          tag="v${VERSION}"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          # Outside refs/tags: the checkout fetched the repository's tags,
+          # and a tag of this name there must not be clobbered by the fetch.
+          git fetch --no-tags "$RUNNER_TEMP/release-commit/release.bundle" "refs/tags/${tag}:refs/release/${tag}"
+          tag_object=$(git rev-parse "refs/release/${tag}")
+          test "$(git rev-parse "${tag_object}^{commit}")" = "$COMMIT"
+
+          remote_object=$(git ls-remote "$remote" "refs/tags/${tag}" | awk -v ref="refs/tags/${tag}" '$2 == ref { print $1 }')
+          if [ "$remote_object" = "$tag_object" ]; then
+            echo "${tag} is already pushed, together with main; skipping."
+            exit 0
+          elif [ -n "$remote_object" ]; then
+            echo "::error::Tag ${tag} already exists on another commit."
+            exit 1
+          fi
+
+          # main moved on during the builds: merge the release commit into it
+          # rather than rebase - a rebased commit is one no build checked out,
+          # and the tag must name the tree the binaries came from. The merge
+          # carries skip-checks for the reason the release commit does.
+          target=$COMMIT
+          if [ "$(git rev-parse HEAD)" != "$PARENT" ]; then
+            git config user.name "$AUTHOR_NAME"
+            git config user.email "$AUTHOR_EMAIL"
+            git config commit.cleanup verbatim
+            if ! git merge --no-ff -m "release: merge ${tag} into main"$'\n\n\n'"skip-checks: true" "$COMMIT"; then
+              echo "::error::The release commit conflicts with what main gained during the builds. Re-run all jobs to bump and build the new tip of main."
+              exit 1
+            fi
+            target=$(git rev-parse HEAD)
+          fi
+
+          # A merge landing between the checkout and here is rejected as
+          # non-fast-forward, before anything was published: re-run the
+          # failed jobs, and this job merges into the new tip.
+          git push --atomic "$remote" "${target}:refs/heads/main" "refs/release/${tag}:refs/tags/${tag}"
 
   # This job holds the release credentials (id-token for npm and crates.io
   # trusted publishing, the app key for the GitHub Release) and in exchange
@@ -346,7 +486,7 @@ jobs:
   # package already there is skipped, a different one fails the run.
   release:
     name: Publish release, npm packages and crate
-    needs: [bump, build]
+    needs: [bump, push]
     runs-on: ubuntu-26.04
     permissions:
       contents: read # the GitHub Release uses the app token below, not GITHUB_TOKEN
