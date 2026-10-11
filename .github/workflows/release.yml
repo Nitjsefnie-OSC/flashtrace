@@ -450,8 +450,10 @@ jobs:
                 chmod +x "$bin_dir/flashtrace"
                 ;;
             esac
-            # the binary is redistributed under the license, so its text
-            # travels with it
+            # The binary is redistributed under the license, so its text
+            # travels with it. The platform packages have no prepack (packed
+            # by hand they hold no binary either), so this copy is their
+            # only one.
             cp LICENSE "npm/@flashtrace/${platform}/LICENSE"
             publish_once "npm/@flashtrace/${platform}"
           done

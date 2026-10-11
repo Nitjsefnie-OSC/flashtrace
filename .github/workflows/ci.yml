@@ -98,6 +98,8 @@ jobs:
       - name: Parse the launcher
         run: node --check npm/flashtrace/bin/flashtrace.js
 
+      # Only the launcher's contents are checked below; the platform
+      # tarballs are checked by the npm smoke test in the test job.
       - name: Verify every package packs
         run: |
           for package in npm/flashtrace npm/@flashtrace/*; do
