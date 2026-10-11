@@ -18,9 +18,13 @@ on:
       - main
 
 # Serialize releases so two quickly merged PRs cannot race on the version bump.
+# queue: max keeps every waiting run: with the default, a group holds a single
+# pending run, and the next push to main would cancel it along with its PR's
+# release label.
 concurrency:
   group: release
   cancel-in-progress: false
+  queue: max
 
 jobs:
   gate:
