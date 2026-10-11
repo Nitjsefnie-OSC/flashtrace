@@ -320,26 +320,34 @@ jobs:
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       # Archived here, where the file mode still exists: upload-artifact does
-      # not preserve the executable bit, a tar does.
+      # not preserve the executable bit, a tar does. Each archive holds one
+      # folder named like the archive - the binary, and the LICENSE it is
+      # redistributed under, with the README - so unpacking it leaves that
+      # folder rather than loose files.
       - name: Package the binary
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.bump.outputs.version }}
         run: |
+          name="flashtrace-v${VERSION}-${TARGET}"
           staging=$(mktemp -d)
+          mkdir "$staging/$name"
+          cp LICENSE README.md "$staging/$name/"
           case "$TARGET" in
             *windows*)
-              cp "target/$TARGET/release/flashtrace.exe" "$staging/"
-              (cd "$staging" && 7z a "flashtrace-v${VERSION}-${TARGET}.zip" flashtrace.exe > /dev/null)
+              cp "target/$TARGET/release/flashtrace.exe" "$staging/$name/"
+              (cd "$staging" && 7z a "${name}.zip" "$name" > /dev/null)
+              archive="${name}.zip"
               ;;
             *)
-              cp "target/$TARGET/release/flashtrace" "$staging/"
-              tar -czf "$staging/flashtrace-v${VERSION}-${TARGET}.tar.gz" -C "$staging" flashtrace
+              cp "target/$TARGET/release/flashtrace" "$staging/$name/"
+              tar -czf "$staging/${name}.tar.gz" -C "$staging" "$name"
+              archive="${name}.tar.gz"
               ;;
           esac
           mkdir -p assets
-          mv "$staging"/flashtrace-v*.zip "$staging"/flashtrace-v*.tar.gz assets/ 2>/dev/null || true
+          mv "$staging/$archive" assets/
           ls -l assets
 
       - name: Set up Node.js
@@ -355,17 +363,24 @@ jobs:
           TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.bump.outputs.version }}
         run: |
+          name="flashtrace-v${VERSION}-${TARGET}"
           mkdir smoke-binary
           case "$TARGET" in
             *windows*)
-              7z x "assets/flashtrace-v${VERSION}-${TARGET}.zip" -osmoke-binary > /dev/null
-              binary=smoke-binary/flashtrace.exe
+              7z x "assets/${name}.zip" -osmoke-binary > /dev/null
+              binary="smoke-binary/${name}/flashtrace.exe"
               ;;
             *)
-              tar -xzf "assets/flashtrace-v${VERSION}-${TARGET}.tar.gz" -C smoke-binary
-              binary=smoke-binary/flashtrace
+              tar -xzf "assets/${name}.tar.gz" -C smoke-binary
+              binary="smoke-binary/${name}/flashtrace"
               ;;
           esac
+          for file in LICENSE README.md; do
+            if [ ! -f "smoke-binary/${name}/${file}" ]; then
+              echo "::error::${file} is missing from ${name}."
+              exit 1
+            fi
+          done
           node .github/scripts/npm-smoke-test.mjs "$binary"
 
       # Kept as long as the run can be re-run (30 days): a retried release job
@@ -597,12 +612,15 @@ jobs:
             # does not
             bin_dir="npm/@flashtrace/${platform}/bin"
             mkdir -p "$bin_dir"
+            # Only the binary, out of the archive's folder: the LICENSE beside
+            # it goes to the package root below, the README stays out.
+            name="flashtrace-v${VERSION}-${target}"
             case "$target" in
               *windows*)
-                unzip -o "assets/flashtrace-v${VERSION}-${target}.zip" -d "$bin_dir"
+                unzip -o -j "assets/${name}.zip" "${name}/flashtrace.exe" -d "$bin_dir"
                 ;;
               *)
-                tar -xzf "assets/flashtrace-v${VERSION}-${target}.tar.gz" -C "$bin_dir"
+                tar -xzf "assets/${name}.tar.gz" -C "$bin_dir" --strip-components=1 "${name}/flashtrace"
                 chmod +x "$bin_dir/flashtrace"
                 ;;
             esac
