@@ -212,7 +212,7 @@ jobs:
       # image does not bound the supported OS versions (static musl, rustc's
       # default macOS deployment target), so bump them as GitHub retires
       # images: https://github.com/actions/runner-images - together with
-      # ci.yml, whose tests run on the same images
+      # ci.yml, whose tests run the same targets on the same images
       matrix:
         include:
           # No musl-tools: the musl targets bring their own libc and startup

@@ -27,29 +27,38 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
   test:
-    name: Test on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: Test ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      # every runner the release builds on (release.yml), so an image problem
-      # surfaces in a PR rather than mid-release; bump the images in both
-      # workflows together
+      # every target the release builds, on the runner it builds on
+      # (release.yml), so an image or target problem surfaces in a PR rather
+      # than mid-release; change both matrices together
       matrix:
-        os:
-          - ubuntu-26.04
-          - ubuntu-26.04-arm
-          - macos-26-intel
-          - macos-26
-          - windows-2025-vs2026
-          - windows-11-vs2026-arm
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-26.04
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-26.04-arm
+          - target: x86_64-apple-darwin
+            runner: macos-26-intel
+          - target: aarch64-apple-darwin
+            runner: macos-26
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025-vs2026
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-vs2026-arm
     permissions:
       contents: read # checkout only; the tests run locally
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Test
-        run: cargo test --locked
+      - name: Add the target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Test on the target
+        run: cargo test --locked --target ${{ matrix.target }}
 
       # Cargo.toml's include list decides what ships; a build script missing
       # from it is dropped from the crate without an error, and crates.io
@@ -68,13 +77,13 @@ jobs:
         with:
           node-version: 22
 
-      # The test run above built target/debug/flashtrace; the smoke test packs
-      # it into this runner's platform package, installs the tarballs into an
-      # empty project and runs the installed command. The release build runs
-      # the same script against every released binary.
+      # The test run above built target/<target>/debug/flashtrace; the smoke
+      # test packs it into this runner's platform package, installs the
+      # tarballs into an empty project and runs the installed command. The
+      # release build runs the same script against every released binary.
       - name: Smoke-test the npm packages with the built binary
         shell: bash
-        run: node .github/scripts/npm-smoke-test.mjs "target/debug/flashtrace${{ runner.os == 'Windows' && '.exe' || '' }}"
+        run: node .github/scripts/npm-smoke-test.mjs "target/${{ matrix.target }}/debug/flashtrace${{ runner.os == 'Windows' && '.exe' || '' }}"
 
   # The npm launcher and platform-package templates ship binaries only at
   # release time; this keeps every package packable. Installing and running
