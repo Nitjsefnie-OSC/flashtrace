@@ -75,8 +75,6 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       parent: ${{ steps.version.outputs.parent }}
       commit: ${{ steps.version.outputs.commit }}
-      author-name: ${{ steps.version.outputs.author-name }}
-      author-email: ${{ steps.version.outputs.author-email }}
     steps:
       # "Re-run all jobs" once this run's release commit reached main would
       # release the merge a second time. Before that - a build that failed
@@ -131,12 +129,8 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           bot_id=$(gh api "/users/${APP_SLUG}[bot]" --jq .id)
-          author_name="${APP_SLUG}[bot]"
-          author_email="${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
-          git config user.name "$author_name"
-          git config user.email "$author_email"
-          echo "author-name=${author_name}" >> "$GITHUB_OUTPUT"
-          echo "author-email=${author_email}" >> "$GITHUB_OUTPUT"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
           # The tip the builds check out and the release commit's parent.
           echo "parent=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
@@ -390,9 +384,14 @@ jobs:
 
   # The only job that writes to the repository, and it runs only after every
   # target built and tested the release commit. It pushes the very commit
-  # and tag the builds checked out, taken from the bundle. The bypass of
+  # and tag the builds checked out, taken from the bundle, and only as a
+  # fast-forward: main then always reads "... merge, release: vX.Y.Z", and
+  # that release commit is exactly the tagged, built one. The bypass of
   # main's ruleset follows the release app, not the token's permissions, so
   # the token carries only what the push needs.
+  #
+  # Should main move on during the builds, nothing is pushed and the run
+  # fails: re-run all jobs, and the bump releases the new tip of main.
   push:
     name: Push release commit and tag
     needs: [bump, build]
@@ -400,13 +399,10 @@ jobs:
     permissions:
       contents: read # the push uses the app token, not GITHUB_TOKEN
     steps:
-      # Full history: if main moved on during the builds, the release commit
-      # is merged into it, which needs their merge base.
       - name: Checkout main
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: main
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Download the release commit
@@ -424,8 +420,7 @@ jobs:
           permission-contents: write
 
       # --atomic: main and the tag land together or not at all, so a tag on
-      # the repository always means main has its commit - which is what lets
-      # a re-run skip the push once the tag is there.
+      # the repository always means main has its commit.
       - name: Push the release commit and tag
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -433,46 +428,45 @@ jobs:
           VERSION: ${{ needs.bump.outputs.version }}
           PARENT: ${{ needs.bump.outputs.parent }}
           COMMIT: ${{ needs.bump.outputs.commit }}
-          AUTHOR_NAME: ${{ needs.bump.outputs.author-name }}
-          AUTHOR_EMAIL: ${{ needs.bump.outputs.author-email }}
         run: |
           tag="v${VERSION}"
           remote="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
-          # Outside refs/tags: the checkout fetched the repository's tags,
-          # and a tag of this name there must not be clobbered by the fetch.
-          git fetch --no-tags "$RUNNER_TEMP/release-commit/release.bundle" "refs/tags/${tag}:refs/release/${tag}"
-          tag_object=$(git rev-parse "refs/release/${tag}")
-          test "$(git rev-parse "${tag_object}^{commit}")" = "$COMMIT"
+          main=$(git rev-parse HEAD)
 
-          remote_object=$(git ls-remote "$remote" "refs/tags/${tag}" | awk -v ref="refs/tags/${tag}" '$2 == ref { print $1 }')
-          if [ "$remote_object" = "$tag_object" ]; then
+          # An earlier attempt of this job already pushed both, and only its
+          # report got lost: nothing left to do.
+          if [ "$main" = "$COMMIT" ]; then
+            pushed=$(git ls-remote "$remote" "refs/tags/${tag}^{}" | awk '{ print $1 }')
+            if [ "$pushed" != "$COMMIT" ]; then
+              echo "::error::main is at the release commit, but tag ${tag} does not name it."
+              exit 1
+            fi
             echo "${tag} is already pushed, together with main; skipping."
             exit 0
-          elif [ -n "$remote_object" ]; then
+          fi
+
+          # A merge landed during the builds. The release commit only
+          # fast-forwards from the commit it was built on: merged into main it
+          # would leave a merge commit, rebased onto it a commit no build
+          # checked out.
+          if [ "$main" != "$PARENT" ]; then
+            echo "::error::main moved on during the builds (built on ${PARENT}, main is at ${main}); nothing was pushed. Re-run all jobs to release the new tip of main."
+            exit 1
+          fi
+
+          # Outside refs/tags, so a tag of this name the checkout may know
+          # is not clobbered by the fetch.
+          git fetch --no-tags "$RUNNER_TEMP/release-commit/release.bundle" "refs/tags/${tag}:refs/release/${tag}"
+          test "$(git rev-parse "refs/release/${tag}^{commit}")" = "$COMMIT"
+          if [ -n "$(git ls-remote "$remote" "refs/tags/${tag}")" ]; then
             echo "::error::Tag ${tag} already exists on another commit."
             exit 1
           fi
 
-          # main moved on during the builds: merge the release commit into it
-          # rather than rebase - a rebased commit is one no build checked out,
-          # and the tag must name the tree the binaries came from. The merge
-          # carries skip-checks for the reason the release commit does.
-          target=$COMMIT
-          if [ "$(git rev-parse HEAD)" != "$PARENT" ]; then
-            git config user.name "$AUTHOR_NAME"
-            git config user.email "$AUTHOR_EMAIL"
-            git config commit.cleanup verbatim
-            if ! git merge --no-ff -m "release: merge ${tag} into main"$'\n\n\n'"skip-checks: true" "$COMMIT"; then
-              echo "::error::The release commit conflicts with what main gained during the builds. Re-run all jobs to bump and build the new tip of main."
-              exit 1
-            fi
-            target=$(git rev-parse HEAD)
-          fi
-
           # A merge landing between the checkout and here is rejected as
-          # non-fast-forward, before anything was published: re-run the
-          # failed jobs, and this job merges into the new tip.
-          git push --atomic "$remote" "${target}:refs/heads/main" "refs/release/${tag}:refs/tags/${tag}"
+          # non-fast-forward, before anything was published: re-run all jobs,
+          # as above.
+          git push --atomic "$remote" "${COMMIT}:refs/heads/main" "refs/release/${tag}:refs/tags/${tag}"
 
   # This job holds the release credentials (id-token for npm and crates.io
   # trusted publishing, the app key for the GitHub Release) and in exchange
