@@ -121,9 +121,46 @@ test('a missing or unreadable manifest fails before posting a preview', () => {
   assert.doesNotMatch(result.stdout, /body=/);
 });
 
+// The package version is the one in the lines "[package]", 'name =
+// "flashtrace"', 'version = "..."', in that order and adjacent; any other
+// version line, before or after, belongs to something else.
+const packageHeader = '[package]\nname = "flashtrace"\nversion = "1.2.3"\n';
+
+for (const [description, manifest] of [
+  ['a dependency table above [package]', `[dependencies.regex]\nversion = "1.11.0"\n\n${packageHeader}`],
+  [
+    'versions in other sections before and after it',
+    `[workspace.package]\nversion = "9.9.9"\n\n${packageHeader}edition = "2024"\n\n[dev-dependencies.x]\nversion = "2.0.0"\n`,
+  ],
+  ['comments and blank lines above [package]', `# a licence header\n\n\n${packageHeader}`],
+  ['CRLF line endings', packageHeader.replaceAll('\n', '\r\n')],
+]) {
+  test(`reads the package version despite ${description}`, () => {
+    const result = communicate({ TEST_MANIFEST: manifest, TEST_LABELS: 'release:minor' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(result.stdout.includes('version **1.2.3** will (most likely) be bumped to **1.3.0**'));
+  });
+}
+
+for (const [description, manifest] of [
+  ['the version line before the name line', '[package]\nversion = "1.2.3"\nname = "flashtrace"\n'],
+  ['a line between the name and the version', '[package]\nname = "flashtrace"\nedition = "2024"\nversion = "1.2.3"\n'],
+  ['no [package] header', 'name = "flashtrace"\nversion = "1.2.3"\n'],
+  ['another package name', '[package]\nname = "other"\nversion = "1.2.3"\n'],
+  ['two package headers', `${packageHeader}\n${packageHeader}`],
+  ['only a dependency carrying a version', '[dependencies.regex]\nversion = "1.11.0"\n'],
+]) {
+  test(`finds no package version with ${description}`, () => {
+    const result = communicate({ TEST_MANIFEST: manifest, TEST_LABELS: 'release:minor' });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stdout, /Expected a major.minor.patch package version/);
+    assert.doesNotMatch(result.stdout, /body=/);
+  });
+}
+
 for (const version of ['', 'invalid', '1.2.3-preview.1']) {
   test(`rejects a missing or unsupported package version: ${JSON.stringify(version)}`, () => {
-    const result = communicate({ TEST_MANIFEST: `[package]\nversion = "${version}"\n` });
+    const result = communicate({ TEST_MANIFEST: `[package]\nname = "flashtrace"\nversion = "${version}"\n` });
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stdout, /Expected a major.minor.patch package version/);
     assert.doesNotMatch(result.stdout, /body=/);
