@@ -5,7 +5,7 @@
 // Usage: node .github/scripts/quality-badges.mjs <lcov-file> <junit-file> <source-dir> <output-dir> <source-extension> [--exempt <file> ...]
 
 import { readFileSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA_VERSION = 1;
@@ -35,13 +35,13 @@ export function toPosixPath(value) {
 // The path a record carries, restated relative to the source directory, or
 // null for a record from outside it. A record may be relative to the working
 // directory the run started in (`src/...`) or absolute (cargo-llvm-cov);
-// either way the source directory anchors the tail that names the file.
+// both are resolved and compared as paths, so another directory that merely
+// shares the source directory's name - a dependency's `src/`, a fixture's -
+// is not taken for it.
 export function relativeToSourceDir(path, sourceDir) {
-  const posix = toPosixPath(path);
-  const prefix = `${toPosixPath(sourceDir)}/`;
-  if (posix.startsWith(prefix)) return posix.slice(prefix.length);
-  const anchored = posix.lastIndexOf(`/${prefix}`);
-  return anchored === -1 ? null : posix.slice(anchored + 1 + prefix.length);
+  const inside = relative(resolve(sourceDir), resolve(path));
+  if (inside === '' || isAbsolute(inside) || inside.split(/[\\/]/)[0] === '..') return null;
+  return toPosixPath(inside);
 }
 
 // lcov records one `LF:` (lines found) and one `LH:` (lines hit) per source

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -50,9 +50,21 @@ test('relativeToSourceDir strips the source prefix and rejects outsiders', () =>
   assert.equal(relativeToSourceDir('tests/cli.rs', 'src'), null);
   // A sibling that merely starts with the same letters is not inside src/.
   assert.equal(relativeToSourceDir('sources/a.rs', 'src'), null);
-  // absolute records (cargo-llvm-cov) anchor on the source directory
-  assert.equal(relativeToSourceDir('C:\\repo\\src\\ids.rs', 'src'), 'ids.rs');
-  assert.equal(relativeToSourceDir('/home/runner/repo/src/nested/deep.rs', 'src'), 'nested/deep.rs');
+  // absolute records (cargo-llvm-cov) name this checkout's source directory,
+  // in the platform's spelling or with forward slashes
+  assert.equal(relativeToSourceDir(resolve('src', 'ids.rs'), 'src'), 'ids.rs');
+  assert.equal(relativeToSourceDir(toPosixPath(resolve('src', 'nested', 'deep.rs')), 'src'), 'nested/deep.rs');
+});
+
+test('relativeToSourceDir does not take another directory named src for the source directory', () => {
+  // a dependency's sources, as a coverage tool may record them
+  assert.equal(relativeToSourceDir(resolve(workDir, 'registry', 'regex-1.11.1', 'src', 'lib.rs'), 'src'), null);
+  // a fixture tree elsewhere in the repository
+  assert.equal(relativeToSourceDir('tests/fixtures/src/x.rs', 'src'), null);
+  // a directory named src below the source directory keeps its full path
+  assert.equal(relativeToSourceDir(resolve('src', 'a', 'src', 'b.rs'), 'src'), 'a/src/b.rs');
+  // a record climbing out of the source directory
+  assert.equal(relativeToSourceDir('src/../build.rs', 'src'), null);
 });
 
 test('readLineCoverage weights each file by its size, not by its percentage', () => {
