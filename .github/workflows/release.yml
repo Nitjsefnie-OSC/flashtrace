@@ -221,26 +221,20 @@ jobs:
           # Cargo.lock). The dry run confirmed both targets link without it.
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-26.04
-            test: true
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-26.04-arm
-            test: true
           # Built and tested natively on an Intel runner. Intel macOS images
-          # end with Apple's Intel support; once the last one retires, build
-          # this target on the arm64 runner instead, cross-compiled, with
-          # test: false.
+          # end with Apple's Intel support; once the last one retires, this
+          # target can only be cross-compiled on the arm64 runner, where its
+          # tests and the npm smoke test cannot run.
           - target: x86_64-apple-darwin
             runner: macos-26-intel
-            test: true
           - target: aarch64-apple-darwin
             runner: macos-26
-            test: true
           - target: x86_64-pc-windows-msvc
             runner: windows-2025-vs2026
-            test: true
           - target: aarch64-pc-windows-msvc
             runner: windows-11-vs2026-arm
-            test: true
     permissions:
       contents: read
     steps:
@@ -255,7 +249,6 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Test on the target
-        if: matrix.test
         shell: bash
         run: cargo test --locked --target ${{ matrix.target }}
 
@@ -287,16 +280,13 @@ jobs:
           ls -l assets
 
       - name: Set up Node.js
-        if: matrix.test
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
 
       # The binary comes back out of the archive just packaged, so the smoke
-      # test installs and runs the very bytes the release job publishes. A
-      # target with test: false could not run here, as with its tests.
+      # test installs and runs the very bytes the release job publishes.
       - name: Smoke-test the npm packages with the packaged binary
-        if: matrix.test
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
