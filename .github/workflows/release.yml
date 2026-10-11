@@ -97,13 +97,15 @@ jobs:
 
       # main is protected by a ruleset that GITHUB_TOKEN cannot bypass; the
       # release app is on the ruleset's bypass list, so its token may push the
-      # bump commit directly.
+      # bump commit directly. The bypass follows the app, not the token's
+      # permissions, so the token carries only what the push needs.
       - name: Create GitHub App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
 
       # Author the bump commit as the release app's bot user so it shows the
       # app's name and avatar. GitHub resolves the identity from the author
@@ -351,12 +353,16 @@ jobs:
           merge-multiple: true
           path: assets
 
+      # The GitHub Release only: contents for the release and its assets, and
+      # pull requests read for the notes --generate-notes builds from them.
       - name: Create GitHub App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: read
 
       # A draft, made public only after the registries: the release
       # communicator lists releases with --exclude-drafts, so a draft never
