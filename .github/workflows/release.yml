@@ -99,8 +99,10 @@ jobs:
 
       # The tip of main, not github.sha: if another PR merged while this run
       # was queued, the release ships that newer - still reviewed and merged -
-      # content under this run's label, and the newer push's own run reads its
-      # own label.
+      # content under this run's label alone. That PR's own run then finds it
+      # released and stops, so its label goes unused: a release:major merged
+      # behind a release:patch ships as a patch. Merge labelled PRs one
+      # release at a time.
       - name: Checkout main
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
