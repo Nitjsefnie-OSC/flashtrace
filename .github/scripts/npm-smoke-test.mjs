@@ -81,8 +81,8 @@ function npm(args, cwd) {
 }
 
 // --ignore-scripts, as the release job packs: the launcher's prepack copies
-// the root README by a path that exists only inside the checkout, so
-// stageAndPack copies it instead
+// the root README and LICENSE by a path that exists only inside the checkout,
+// so stageAndPack copies them instead
 function pack(packageDir, destination) {
   const [packed] = JSON.parse(npm(['pack', '--json', '--ignore-scripts', '--pack-destination', destination], packageDir));
   return { tarball: join(destination, packed.filename), files: packed.files };
@@ -132,16 +132,19 @@ function readBinaryArgument() {
   return binary;
 }
 
-// S1: stage copies of both packages, the root README in the launcher and the
-// binary in the platform package's bin/, and pack them. The repository holds
-// no bin/ for the platform packages; it exists only once a binary is in it.
+// S1: stage copies of both packages, the root README in the launcher, the
+// root LICENSE in both and the binary in the platform package's bin/, and
+// pack them. The repository holds no bin/ for the platform packages; it
+// exists only once a binary is in it.
 function stageAndPack(workDir, binary, version) {
   const launcherDir = join(workDir, 'stage', 'launcher');
   const platformDir = join(workDir, 'stage', 'platform');
   const tarballDir = join(workDir, 'tarballs');
   cpSync(join(repositoryRoot, 'npm', 'flashtrace'), launcherDir, { recursive: true });
   copyFileSync(join(repositoryRoot, 'README.md'), join(launcherDir, 'README.md'));
+  copyFileSync(join(repositoryRoot, 'LICENSE'), join(launcherDir, 'LICENSE'));
   cpSync(join(repositoryRoot, 'npm', '@flashtrace', platform), platformDir, { recursive: true });
+  copyFileSync(join(repositoryRoot, 'LICENSE'), join(platformDir, 'LICENSE'));
   mkdirSync(join(platformDir, 'bin'), { recursive: true });
   copyFileSync(binary, join(platformDir, 'bin', binaryName));
   if (!isWindows) chmodSync(join(platformDir, 'bin', binaryName), 0o755);
@@ -152,6 +155,8 @@ function stageAndPack(workDir, binary, version) {
   const platformPacked = pack(platformDir, tarballDir);
 
   check('S1 the launcher tarball contains README.md', launcher.files.some((file) => file.path === 'README.md'));
+  check('S1 the launcher tarball contains LICENSE', launcher.files.some((file) => file.path === 'LICENSE'));
+  check('S1 the platform tarball contains LICENSE', platformPacked.files.some((file) => file.path === 'LICENSE'));
   const packedBinary = platformPacked.files.find((file) => file.path === `bin/${binaryName}`);
   check(`S1 the platform tarball contains bin/${binaryName}`, packedBinary !== undefined);
   if (!isWindows) {

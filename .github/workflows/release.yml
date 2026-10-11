@@ -450,10 +450,13 @@ jobs:
                 chmod +x "$bin_dir/flashtrace"
                 ;;
             esac
+            # the binary is redistributed under the license, so its text
+            # travels with it
+            cp LICENSE "npm/@flashtrace/${platform}/LICENSE"
             publish_once "npm/@flashtrace/${platform}"
           done
           # What the launcher's prepack does, which --ignore-scripts skips
-          cp README.md npm/flashtrace/README.md
+          cp README.md LICENSE npm/flashtrace/
           publish_once npm/flashtrace
 
       # The crates.io counterpart of publish_once. cargo package yields the
