@@ -30,11 +30,17 @@ jobs:
           fi
 
           # One extractor per file shape; each prints nothing when the file
-          # carries no version.
+          # carries no version. Cargo.toml's is the one in the lines
+          # "[package]", 'name = "flashtrace"', 'version = "..."', in that
+          # order and adjacent, as the release workflow bumps it; anything but
+          # exactly one such block yields nothing.
           version_of() {
             case "$1" in
               *.json) node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version ?? ""' ;;
-              Cargo.toml) sed -n 's/^version = "\(.*\)"$/\1/p' | head -1 ;;
+              Cargo.toml) awk '{ sub(/\r$/, "") }
+                prev2 == "[package]" && prev1 == "name = \"flashtrace\"" && /^version = "[^"]*"$/ { found++; version = substr($0, 12, length($0) - 12) }
+                { prev2 = prev1; prev1 = $0 }
+                END { if (found == 1) print version }' ;;
               Cargo.lock) awk '/^name = "flashtrace"$/ { getline; sub(/^version = "/, ""); sub(/"$/, ""); print; exit }' ;;
             esac
           }

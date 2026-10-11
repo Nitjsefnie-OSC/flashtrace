@@ -136,7 +136,21 @@ jobs:
           # The tip the builds check out and the release commit's parent.
           echo "parent=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-          current=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          # The package version is the one in the lines "[package]", 'name =
+          # "flashtrace"', 'version = "..."', in that order and adjacent -
+          # never just the first version line, which may be a dependency's.
+          # Anything but exactly one such block yields nothing.
+          package_version() {
+            awk '{ sub(/\r$/, "") }
+              prev2 == "[package]" && prev1 == "name = \"flashtrace\"" && /^version = "[^"]*"$/ { found++; version = substr($0, 12, length($0) - 12) }
+              { prev2 = prev1; prev1 = $0 }
+              END { if (found == 1) print version }' Cargo.toml
+          }
+          current=$(package_version)
+          if [[ ! "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=Cargo.toml::Expected one [package] / name = \"flashtrace\" / version = \"major.minor.patch\" block, found \"${current}\"."
+            exit 1
+          fi
           IFS=. read -r major minor patch <<< "$current"
           case "$LEVEL" in
             major) version="$((major + 1)).0.0" ;;
@@ -161,9 +175,9 @@ jobs:
             exit 1
           fi
 
-          # Cargo.toml carries the version once, at the top of [package];
-          # Cargo.lock in the package's own [[package]] block.
-          sed -i "0,/^version = \".*\"$/s//version = \"${version}\"/" Cargo.toml
+          # Cargo.toml in that very block, Cargo.lock in the package's own
+          # [[package]] block.
+          sed -i "/^\[package\]$/{n;/^name = \"flashtrace\"$/{n;s/^version = \"[^\"]*\"$/version = \"${version}\"/}}" Cargo.toml
           sed -i "/^name = \"flashtrace\"$/{n;s/^version = .*/version = \"${version}\"/}" Cargo.lock
 
           # The npm manifests: each package's own version, and the main
@@ -191,7 +205,7 @@ jobs:
 
           # Every edit verified: the bumped version must now appear exactly
           # where it belongs, nowhere stale.
-          test "$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)" = "$version"
+          test "$(package_version)" = "$version"
           test "$(awk '/^name = "flashtrace"$/ { getline; sub(/^version = "/, ""); sub(/"$/, ""); print; exit }' Cargo.lock)" = "$version"
           for manifest in npm/flashtrace/package.json npm/@flashtrace/*/package.json; do
             test "$(node -p "require('./$manifest').version")" = "$version"

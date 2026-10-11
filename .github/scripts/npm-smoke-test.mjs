@@ -41,11 +41,17 @@ const platformPackage = `@flashtrace/${platform}`;
 // backslash: the spellings argument passing on Windows gets wrong first
 const UNUSUAL_ARGUMENT = 'a "b" ü\\';
 
+// The lines "[package]", 'name = "flashtrace"', 'version = "..."', in that
+// order and adjacent, as the release workflow reads and bumps them - never
+// just the first version line, which may be a dependency's. Windows runners
+// check the file out with CRLF line endings.
 function readCargoVersion() {
   const manifest = readFileSync(join(repositoryRoot, 'Cargo.toml'), 'utf8');
-  const version = manifest.match(/^version = "(.*)"$/m)?.[1];
-  if (!version) throw new Error('Cargo.toml carries no package version');
-  return version;
+  const blocks = [...manifest.matchAll(/^\[package\]\r?\nname = "flashtrace"\r?\nversion = "([^"]*)"\r?$/gm)];
+  if (blocks.length !== 1) {
+    throw new Error('Cargo.toml carries no single [package] / name = "flashtrace" / version block');
+  }
+  return blocks[0][1];
 }
 
 function setManifestVersions(packageDir, version, pinOptionalDependencies) {

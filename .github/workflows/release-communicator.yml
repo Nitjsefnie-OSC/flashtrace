@@ -90,9 +90,16 @@ jobs:
           # Cargo.toml is the release workflow's version source. Read only
           # main via the API: pull_request_target must never execute PR code.
           # Missing/unreadable manifests must fail, not bypass label checks.
+          # The version is the one in the lines "[package]", 'name =
+          # "flashtrace"', 'version = "..."', in that order and adjacent -
+          # never just the first version line, which may be a dependency's.
+          # Anything but exactly one such block yields no version.
           base_version=$(gh api "repos/$REPO/contents/Cargo.toml?ref=main" --jq '.content' \
             | base64 -d \
-            | sed -n 's/^version = "\(.*\)"$/\1/p' | head -1)
+            | awk '{ sub(/\r$/, "") }
+                prev2 == "[package]" && prev1 == "name = \"flashtrace\"" && /^version = "[^"]*"$/ { found++; version = substr($0, 12, length($0) - 12) }
+                { prev2 = prev1; prev1 = $0 }
+                END { if (found == 1) print version }')
           if [[ ! "$base_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo '::error file=Cargo.toml::Expected a major.minor.patch package version on main.'
             exit 1
