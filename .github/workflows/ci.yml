@@ -62,7 +62,9 @@ jobs:
 
       # Cargo.toml's include list decides what ships; a build script missing
       # from it is dropped from the crate without an error, and crates.io
-      # builds would then link the VC runtime dynamically
+      # builds would then link the VC runtime dynamically. The packaged crate
+      # is also built from its own files here, the verification the release
+      # job skips so that it compiles nothing while holding credentials.
       - name: Verify the crate packages
         if: runner.os == 'Linux'
         run: |
@@ -71,6 +73,7 @@ jobs:
             echo "::error::build.rs is missing from the packaged crate"
             exit 1
           fi
+          cargo package --locked
 
       - name: Set up Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
