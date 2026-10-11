@@ -132,10 +132,10 @@ function readBinaryArgument() {
   return binary;
 }
 
-// S1: stage copies of both packages, the root README in the launcher, the
-// root LICENSE in both and the binary in the platform package's bin/, and
-// pack them. The repository holds no bin/ for the platform packages; it
-// exists only once a binary is in it.
+// Stages copies of both packages, the root README in the launcher, the root
+// LICENSE in both and the binary in the platform package's bin/, packs them
+// and checks that the tarballs hold what a user needs. The repository holds
+// no bin/ for the platform packages; it exists only once a binary is in it.
 function stageAndPack(workDir, binary, version) {
   const launcherDir = join(workDir, 'stage', 'launcher');
   const platformDir = join(workDir, 'stage', 'platform');
@@ -154,46 +154,48 @@ function stageAndPack(workDir, binary, version) {
   const launcher = pack(launcherDir, tarballDir);
   const platformPacked = pack(platformDir, tarballDir);
 
-  check('S1 the launcher tarball contains README.md', launcher.files.some((file) => file.path === 'README.md'));
-  check('S1 the launcher tarball contains LICENSE', launcher.files.some((file) => file.path === 'LICENSE'));
-  check('S1 the platform tarball contains LICENSE', platformPacked.files.some((file) => file.path === 'LICENSE'));
+  check('the launcher tarball contains README.md', launcher.files.some((file) => file.path === 'README.md'));
+  check('the launcher tarball contains LICENSE', launcher.files.some((file) => file.path === 'LICENSE'));
+  check('the platform tarball contains LICENSE', platformPacked.files.some((file) => file.path === 'LICENSE'));
   const packedBinary = platformPacked.files.find((file) => file.path === `bin/${binaryName}`);
-  check(`S1 the platform tarball contains bin/${binaryName}`, packedBinary !== undefined);
+  check(`the platform tarball contains bin/${binaryName}`, packedBinary !== undefined);
   if (!isWindows) {
     const mode = packedBinary?.mode ?? 0;
-    check('S1 the packed binary is executable', (mode & 0o111) === 0o111, `mode ${mode.toString(8)}`);
+    check('the packed binary is executable', (mode & 0o111) === 0o111, `mode ${mode.toString(8)}`);
   }
   return { launcherTarball: launcher.tarball, platformTarball: platformPacked.tarball };
 }
 
-// S2-S3: install both tarballs into an empty project without the registry,
-// and the launcher resolves the installed platform package to the binary.
+// Installs both tarballs into an empty project without the registry and
+// checks that the installed launcher resolves the platform package's binary.
 // The five other platform packages stay unresolved optional entries, so
 // `npm ls` would fail here by design and is not the check.
 function installAndResolve(projectDir, tarballs, version) {
   installOffline(projectDir, [tarballs.launcherTarball, tarballs.platformTarball]);
-  check('S2 both tarballs install offline into an empty project', true);
+  check('both tarballs install offline into an empty project', true);
 
   const installedLauncher = join(projectDir, 'node_modules', 'flashtrace', 'bin', 'flashtrace.js');
   const installedManifest = JSON.parse(
     readFileSync(join(projectDir, 'node_modules', '@flashtrace', platform, 'package.json'), 'utf8'),
   );
-  check(`S3 ${platformPackage} is installed at ${version}`, installedManifest.version === version, `found ${installedManifest.version}`);
+  check(`${platformPackage} is installed at ${version}`, installedManifest.version === version, `found ${installedManifest.version}`);
   let resolvedBinary = null;
   try {
     resolvedBinary = createRequire(installedLauncher).resolve(`${platformPackage}/bin/${binaryName}`);
   } catch {
     // reported by the check below
   }
-  check('S3 the launcher resolves the installed binary', resolvedBinary !== null);
+  check('the launcher resolves the installed binary', resolvedBinary !== null);
   if (!isWindows && resolvedBinary) {
-    check('S3 the installed binary is executable', (statSync(resolvedBinary).mode & 0o111) === 0o111);
+    check('the installed binary is executable', (statSync(resolvedBinary).mode & 0o111) === 0o111);
   }
   return installedLauncher;
 }
 
-// R1-R7 run the command npm installed, from a fresh copy of an example where
-// the run needs a project
+// Runs the command npm installed, from a fresh copy of an example where the
+// run needs a project. A few snapshots suffice: the e2e suite pins the output,
+// these runs prove that the installed command reaches the binary and passes
+// its output and exit code through.
 function checkInstalledCommand(workDir, projectDir, version) {
   function runInstalled(args, example) {
     let cwd = projectDir;
@@ -206,19 +208,19 @@ function checkInstalledCommand(workDir, projectDir, version) {
 
   const versionRun = runInstalled(['--version']);
   check(
-    `R1 --version prints ${version}`,
+    `--version prints ${version}`,
     versionRun.status === 0 && versionRun.stdout === `${version}\n` && versionRun.stderr === '',
     describe(versionRun),
   );
 
   const helpRun = runInstalled(['--help']);
-  check('R2 --help prints the usage', helpRun.status === 0 && helpRun.stdout.length > 0, describe(helpRun));
+  check('--help prints the usage', helpRun.status === 0 && helpRun.stdout.length > 0, describe(helpRun));
 
   const snapshotRuns = [
-    ['R3 a clean project', 'basic', [], 0, 'basic.default'],
-    ['R4 the JSON report', 'basic', ['--json'], 0, 'basic.json'],
-    ['R5 a project with defects', 'diagnostics', [], 1, 'diagnostics.default'],
-    ['R6 an option with a value', 'polyglot-web', ['--tags', 'web,data'], 0, 'polyglot-web.tags'],
+    ['a clean project', 'basic', [], 0, 'basic.default'],
+    ['the JSON report', 'basic', ['--json'], 0, 'basic.json'],
+    ['a project with defects', 'diagnostics', [], 1, 'diagnostics.default'],
+    ['an option with a value', 'polyglot-web', ['--tags', 'web,data'], 0, 'polyglot-web.tags'],
   ];
   for (const [name, example, args, status, snapshot] of snapshotRuns) {
     const res = runInstalled(args, example);
@@ -234,35 +236,34 @@ function checkInstalledCommand(workDir, projectDir, version) {
 
   const usageRun = runInstalled(['--frobnicate']);
   check(
-    'R7 an unknown option exits 2 with the error on stderr',
+    'an unknown option exits 2 with the error on stderr',
     usageRun.status === 2 && usageRun.stdout === '' && usageRun.stderr.startsWith('error: unknown option'),
     describe(usageRun),
   );
 }
 
-// R8 runs the launcher directly: Node quotes the arguments of both spawns,
-// and only the launcher's own spawn is this repository's code - npm's
-// Windows .cmd shim is not
+// Runs the launcher directly rather than the installed command: Node quotes
+// the arguments of both spawns, and only the launcher's own spawn is this
+// repository's code - npm's Windows .cmd shim is not
 function checkArgumentPassing(projectDir, installedLauncher) {
   const argumentRun = spawnSync(process.execPath, [installedLauncher, '--format', UNUSUAL_ARGUMENT], {
     cwd: projectDir,
     encoding: 'utf8',
   });
   check(
-    'R8 the launcher passes arguments through unchanged',
+    'the launcher passes arguments through unchanged',
     argumentRun.status === 2 && argumentRun.stderr.includes(`"${UNUSUAL_ARGUMENT}"`),
     describe(argumentRun),
   );
 }
 
-// R9: without the optional dependency the launcher explains instead of
-// crashing
+// Without the optional dependency the launcher explains instead of crashing
 function checkMissingPlatformPackage(workDir, launcherTarball) {
   const bareProjectDir = join(workDir, 'project-without-binary');
   installOffline(bareProjectDir, [launcherTarball], ['--omit=optional']);
   const missingRun = runCommand(installedCommand(bareProjectDir), ['--version'], bareProjectDir);
   check(
-    'R9 a missing platform package exits 2 with an explanation',
+    'a missing platform package exits 2 with an explanation',
     missingRun.status === 2 && missingRun.stderr.includes(`no prebuilt binary for ${platform}`),
     describe(missingRun),
   );
