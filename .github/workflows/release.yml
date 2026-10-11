@@ -190,12 +190,15 @@ jobs:
       # explicitly with the app token. If a merge lands between the checkout
       # and here, the push is rejected as non-fast-forward and the run fails
       # cleanly before anything was published: re-run all jobs to bump and
-      # release the new tip.
+      # release the new tip. --atomic makes that hold for the tag too: git
+      # otherwise pushes each ref on its own, so the tag would land on a commit
+      # main never received, and a re-run would move main on while the tag
+      # stayed on that commit - the build checks out the tag.
       - name: Push bump commit and tag
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
-        run: git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" HEAD:main --follow-tags
+        run: git push --atomic "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" HEAD:main --follow-tags
 
   # Everything that executes repository-controlled code (the tests, the build)
   # runs here, in jobs that hold no secrets and no id-token permission:
