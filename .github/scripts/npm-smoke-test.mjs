@@ -143,9 +143,9 @@ function readBinaryArgument() {
 // package in the repository, not only this machine's.
 function checkPlatformPackageNames() {
   const launcherManifest = JSON.parse(readFileSync(join(repositoryRoot, 'npm', 'flashtrace', 'package.json'), 'utf8'));
-  const platformDirs = readdirSync(join(repositoryRoot, 'npm', '@flashtrace')).sort();
+  const platformDirs = readdirSync(join(repositoryRoot, 'npm', '@flashtrace')).sort((left, right) => left.localeCompare(right));
   const expectedPins = platformDirs.map((dir) => `@flashtrace/${dir}`);
-  const pins = Object.keys(launcherManifest.optionalDependencies ?? {}).sort();
+  const pins = Object.keys(launcherManifest.optionalDependencies ?? {}).sort((left, right) => left.localeCompare(right));
   check(
     'the launcher pins exactly the platform packages in npm/@flashtrace',
     JSON.stringify(pins) === JSON.stringify(expectedPins),
