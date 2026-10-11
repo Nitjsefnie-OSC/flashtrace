@@ -70,12 +70,29 @@ test('relativeToSourceDir does not take another directory named src for the sour
 test('readLineCoverage weights each file by its size, not by its percentage', () => {
   // 1/1 in one file and 0/99 in another averages to 50% but is 1% by lines.
   const lcov = writeTemp('cov.info', 'SF:src/a.rs\nLF:1\nLH:1\nSF:src/b.rs\nLF:99\nLH:0\n');
-  assert.equal(readLineCoverage(lcov), 1);
+  assert.equal(readLineCoverage(lcov, 'src'), 1);
 });
 
 test('readLineCoverage throws when the report carries no line records', () => {
   const empty = writeTemp('empty.info', 'TN:\nend_of_record\n');
-  assert.throws(() => readLineCoverage(empty), /No line-coverage records/);
+  assert.throws(() => readLineCoverage(empty, 'src'), /No line-coverage records/);
+});
+
+test('readLineCoverage counts only the files under the source directory', () => {
+  // A dependency's or a test's record, should a tool report one, would drag
+  // the project's 100% down to 1% if it counted.
+  const dependency = resolve(workDir, 'registry', 'regex-1.11.1', 'src', 'lib.rs');
+  const lcov = writeTemp('mixed.info', [
+    'SF:src/a.rs', 'LF:10', 'LH:10', 'end_of_record',
+    `SF:${dependency}`, 'LF:990', 'LH:0', 'end_of_record',
+    'SF:tests/cli.rs', 'LF:5', 'LH:0', 'end_of_record',
+  ].join('\n'));
+  assert.equal(readLineCoverage(lcov, 'src'), 100);
+});
+
+test('readLineCoverage throws when no record lies under the source directory', () => {
+  const lcov = writeTemp('foreign.info', 'SF:tests/cli.rs\nLF:5\nLH:5\nend_of_record\n');
+  assert.throws(() => readLineCoverage(lcov, 'src'), /No line-coverage records for files under src\//);
 });
 
 test('countTestCases counts every testcase element', () => {

@@ -46,19 +46,26 @@ export function relativeToSourceDir(path, sourceDir) {
 
 // lcov records one `LF:` (lines found) and one `LH:` (lines hit) per source
 // file. Line coverage for the project is the ratio of the summed pair, which
-// weights each file by its size instead of averaging percentages.
-export function readLineCoverage(lcovPath) {
+// weights each file by its size instead of averaging percentages. Only the
+// files under the source directory count: a record from elsewhere - a
+// dependency or a test, should a tool report them - leaves the ratio alone
+// rather than relying on the tool's defaults to leave it out.
+export function readLineCoverage(lcovPath, sourceDir) {
   const lcov = readFileSync(lcovPath, 'utf8');
   let linesFound = 0;
   let linesHit = 0;
+  let counted = false;
 
   for (const line of lcov.split(/\r?\n/)) {
-    if (line.startsWith('LF:')) linesFound += Number(line.slice(3));
+    if (line.startsWith('SF:')) counted = relativeToSourceDir(line.slice(3), sourceDir) !== null;
+    else if (line === 'end_of_record') counted = false;
+    else if (!counted) continue;
+    else if (line.startsWith('LF:')) linesFound += Number(line.slice(3));
     else if (line.startsWith('LH:')) linesHit += Number(line.slice(3));
   }
 
   if (linesFound === 0) {
-    throw new Error(`No line-coverage records found in ${lcovPath}.`);
+    throw new Error(`No line-coverage records for files under ${sourceDir}/ found in ${lcovPath}.`);
   }
   return (linesHit / linesFound) * 100;
 }
@@ -138,7 +145,7 @@ function main(argv) {
 
   assertEverySourceFileMeasured(lcovPath, sourceDir, sourceExtension, exempt);
 
-  const coverage = readLineCoverage(lcovPath);
+  const coverage = readLineCoverage(lcovPath, sourceDir);
   const testCount = countTestCases(junitPath);
 
   mkdirSync(outputDir, { recursive: true });
