@@ -127,6 +127,12 @@ jobs:
             major) version="$((major + 1)).0.0" ;;
             minor) version="${major}.$((minor + 1)).0" ;;
             patch) version="${major}.${minor}.$((patch + 1))" ;;
+            # Unreachable while the gate maps labels to these three levels, but
+            # an empty version would pass every check below and tag "v".
+            *)
+              echo "::error::Unknown release level \"${LEVEL}\"; expected major, minor or patch."
+              exit 1
+              ;;
           esac
           echo "Bumping ${current} -> ${version} (${LEVEL})"
 
