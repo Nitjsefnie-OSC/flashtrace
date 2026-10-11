@@ -151,8 +151,10 @@ jobs:
           # Carry the same version into the citation metadata, dated with the
           # UTC day of this run. Rewriting the lines in place keeps the files'
           # comments, ordering, and quoting intact and needs no parser - this
-          # job installs nothing and runs no repository code.
-          for field in "version:${version}" "date-released:$(date -u +%Y-%m-%d)"; do
+          # job installs nothing and runs no repository code. The day is taken
+          # once, so the edit and its check below cannot straddle midnight.
+          released=$(date -u +%Y-%m-%d)
+          for field in "version:${version}" "date-released:${released}"; do
             key=${field%%:*}
             value=${field#*:}
             if ! grep -q "^${key}: " CITATION.cff; then
@@ -175,6 +177,7 @@ jobs:
             if (stale.length > 0) { console.error(`stale pins: ${stale}`); process.exit(1); }
           '
           test "$(sed -n 's|^version: ||p' CITATION.cff)" = "\"$version\""
+          test "$(sed -n 's|^date-released: ||p' CITATION.cff)" = "\"$released\""
 
           # The skip-checks trailer stops the bump push from creating runs of
           # the push-triggered workflows, which have nothing to do on this
