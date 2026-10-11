@@ -405,10 +405,20 @@ jobs:
           # is already on the registry. npm pack yields the same bytes from
           # the same files, so a retry with the same artifacts matches what an
           # earlier attempt published; anything else is a conflicting release.
+          # The files after the directory must be in the tarball: npm pack
+          # succeeds whatever the copies below put in place, so a dropped
+          # copy fails here rather than publishing without it.
           publish_once() {
-            local directory=$1 name pack remote
+            local directory=$1 name pack remote expected
+            shift
             name=$(jq -r .name "$directory/package.json")
             pack=$(npm pack --json --ignore-scripts --pack-destination "$RUNNER_TEMP" "./$directory")
+            for expected in "$@"; do
+              if ! jq -e --arg file "$expected" '.[0].files | any(.path == $file)' <<< "$pack" > /dev/null; then
+                echo "::error::$expected is missing from the ${name} tarball."
+                return 1
+              fi
+            done
             # Not yet published is E404 (or, from older npm, empty output).
             if ! remote=$(npm view --prefer-online "${name}@${VERSION}" dist.integrity 2> "$RUNNER_TEMP/view-error"); then
               if ! grep -q E404 "$RUNNER_TEMP/view-error"; then
@@ -455,11 +465,11 @@ jobs:
             # by hand they hold no binary either), so this copy is their
             # only one.
             cp LICENSE "npm/@flashtrace/${platform}/LICENSE"
-            publish_once "npm/@flashtrace/${platform}"
+            publish_once "npm/@flashtrace/${platform}" LICENSE
           done
           # What the launcher's prepack does, which --ignore-scripts skips
           cp README.md LICENSE npm/flashtrace/
-          publish_once npm/flashtrace
+          publish_once npm/flashtrace LICENSE README.md
 
       # The crates.io counterpart of publish_once. cargo package yields the
       # same .crate on every run from the tag checkout (.cargo_vcs_info.json
