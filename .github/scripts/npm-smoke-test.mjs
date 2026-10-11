@@ -2,8 +2,10 @@
 // CLI: the platform package of this machine receives the given binary, both
 // it and the launcher are packed, the tarballs install offline into an empty
 // project, and the installed command runs a fixed set of invocations whose
-// output is compared against the e2e snapshots. Nothing touches the registry
-// and nothing in the checkout changes; the work happens in a temp directory.
+// output is compared against the e2e snapshots. Beforehand, the launcher's
+// pins are checked against every platform package. Nothing touches the
+// registry and nothing in the checkout changes; the work happens in a temp
+// directory.
 //
 // The version comes from Cargo.toml and is written into the staged manifests,
 // as the release bump writes it into the real ones, so the binary's own
@@ -18,6 +20,7 @@ import {
   cpSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -130,6 +133,35 @@ function readBinaryArgument() {
     throw new Error(`the binary must lie inside the checkout ${repositoryRoot}: ${binary}`);
   }
   return binary;
+}
+
+// The launcher finds its binary by the package name @flashtrace/<os>-<cpu>,
+// and npm installs only the platform packages the launcher pins whose os and
+// cpu match the machine. The install below gets this machine's package from
+// its own tarball whatever the pins say, and a mismatched pin is optional, so
+// npm skips it silently: the names are checked here, for every platform
+// package in the repository, not only this machine's.
+function checkPlatformPackageNames() {
+  const launcherManifest = JSON.parse(readFileSync(join(repositoryRoot, 'npm', 'flashtrace', 'package.json'), 'utf8'));
+  const platformDirs = readdirSync(join(repositoryRoot, 'npm', '@flashtrace')).sort();
+  const expectedPins = platformDirs.map((dir) => `@flashtrace/${dir}`);
+  const pins = Object.keys(launcherManifest.optionalDependencies ?? {}).sort();
+  check(
+    'the launcher pins exactly the platform packages in npm/@flashtrace',
+    JSON.stringify(pins) === JSON.stringify(expectedPins),
+    `pinned:   ${pins.join(', ')}\nexpected: ${expectedPins.join(', ')}`,
+  );
+  for (const dir of platformDirs) {
+    const manifest = JSON.parse(readFileSync(join(repositoryRoot, 'npm', '@flashtrace', dir, 'package.json'), 'utf8'));
+    const [os, cpu] = dir.split('-');
+    check(
+      `npm/@flashtrace/${dir} is named @flashtrace/${dir} and installs on ${os} ${cpu} only`,
+      manifest.name === `@flashtrace/${dir}` &&
+        JSON.stringify(manifest.os) === JSON.stringify([os]) &&
+        JSON.stringify(manifest.cpu) === JSON.stringify([cpu]),
+      `name ${manifest.name}, os ${JSON.stringify(manifest.os)}, cpu ${JSON.stringify(manifest.cpu)}`,
+    );
+  }
 }
 
 // Stages copies of both packages, the root README in the launcher, the root
@@ -275,6 +307,7 @@ function main() {
   const workDir = mkdtempSync(join(tmpdir(), 'flashtrace-npm-smoke-'));
   console.log(`Smoke-testing ${platformPackage} ${version} with ${binary}`);
 
+  checkPlatformPackageNames();
   const tarballs = stageAndPack(workDir, binary, version);
   const projectDir = join(workDir, 'project');
   const installedLauncher = installAndResolve(projectDir, tarballs, version);
