@@ -339,6 +339,21 @@ jobs:
         shell: bash
         run: cargo build --release --locked --target ${{ matrix.target }}
 
+      # A musl binary linked dynamically cannot start on a glibc system; see
+      # the matching check in ci.yml
+      - name: Check the binary is statically linked
+        if: contains(matrix.target, 'musl')
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          linkage=$(file --brief "target/$TARGET/release/flashtrace")
+          echo "$linkage"
+          if ! grep -q static <<< "$linkage"; then
+            echo "::error::the $TARGET binary is not statically linked"
+            exit 1
+          fi
+
       # Archived here, where the file mode still exists: upload-artifact does
       # not preserve the executable bit, a tar does. Each archive holds one
       # folder named like the archive - the binary, and the LICENSE it is
