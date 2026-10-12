@@ -104,7 +104,7 @@ jobs:
       # behind a release:patch ships as a patch. Merge labelled PRs one
       # release at a time.
       - name: Checkout main
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           persist-credentials: false
@@ -302,7 +302,7 @@ jobs:
       # The release commit is not in the repository yet: check out its
       # parent, which main has, and lay the bundled commit on top.
       - name: Checkout the release commit's parent
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.bump.outputs.parent }}
           persist-credentials: false
@@ -431,7 +431,7 @@ jobs:
       contents: read # the push uses the app token, not GITHUB_TOKEN
     steps:
       - name: Checkout main
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           persist-credentials: false
@@ -520,7 +520,7 @@ jobs:
       id-token: write # npm and crates.io trusted publishing (OIDC)
     steps:
       - name: Checkout the released tag
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: v${{ needs.bump.outputs.version }}
           persist-credentials: false
