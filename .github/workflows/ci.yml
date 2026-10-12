@@ -85,7 +85,7 @@ jobs:
       # their one piece of C; the release build installs it the same way
       - name: Install the musl C compiler
         if: contains(matrix.target, 'musl')
-        run: sudo apt-get update && sudo apt-get install --yes musl-tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends musl-tools
 
       - name: Test on the target
         run: cargo test --locked --target ${{ matrix.target }}
