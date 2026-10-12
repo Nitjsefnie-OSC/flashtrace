@@ -245,7 +245,7 @@ jobs:
       # Kept as long as the run can be re-run (30 days), like the binaries.
       # overwrite: "Re-run all jobs" bumps afresh and bundles another commit.
       - name: Upload the release commit
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-commit
           path: ${{ runner.temp }}/release.bundle
@@ -406,7 +406,7 @@ jobs:
       # "Re-run all jobs", the binaries of the new release commit replace
       # those of the attempt that failed.
       - name: Upload the packaged binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: asset-${{ matrix.target }}
           path: assets/*
