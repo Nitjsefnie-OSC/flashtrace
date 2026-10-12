@@ -26,6 +26,30 @@ jobs:
       - name: Lint
         run: cargo clippy --all-targets -- -D warnings
 
+  # Cargo.toml's rust-version is a promise to everyone building the crate
+  # from source; clippy's incompatible_msrv only catches newer std APIs, so
+  # this proves newer language features and dependency updates keep it too.
+  # The tests run rather than a check, so the output contract holds there.
+  minimum-rust:
+    name: Test on the minimum supported Rust
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read # checkout only; the tests run locally
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install the toolchain Cargo.toml names
+        run: |
+          version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          test -n "$version"
+          rustup toolchain install "$version" --profile minimal
+          echo "MINIMUM_RUST=$version" >> "$GITHUB_ENV"
+
+      # +toolchain overrides the rust-toolchain.toml pin
+      - name: Test on the minimum supported Rust
+        run: cargo "+$MINIMUM_RUST" test --locked
+
   test:
     name: Test ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}

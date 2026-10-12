@@ -2,7 +2,7 @@
 name = "flashtrace"
 version = "0.13.1"
 edition = "2024"
-rust-version = "1.97.1"
+rust-version = "1.88.0"
 description = "Lightning-fast, reference-based requirement tracing that works anywhere."
 readme = "README.md"
 homepage = "https://flashtrace.github.io/"
