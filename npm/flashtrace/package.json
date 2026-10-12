@@ -24,7 +24,7 @@
     "bin/"
   ],
   "scripts": {
-    "prepack": "node -e \"require('node:fs').copyFileSync('../../README.md', 'README.md')\""
+    "prepack": "node -e \"for (const file of ['README.md', 'LICENSE']) require('node:fs').copyFileSync('../../' + file, file)\""
   },
   "engines": {
     "node": ">=18"

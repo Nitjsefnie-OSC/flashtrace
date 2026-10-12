@@ -1,9 +1,8 @@
 node_modules/
 coverage/
 badges/
-rust/target/
+target/
 
-package-lock.json
-
-# copied from the root README by the npm launcher's prepack script
+# copied from the root by the npm launcher's prepack script
 npm/flashtrace/README.md
+npm/flashtrace/LICENSE
