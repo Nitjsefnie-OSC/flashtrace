@@ -104,7 +104,7 @@ jobs:
       # behind a release:patch ships as a patch. Merge labelled PRs one
       # release at a time.
       - name: Checkout main
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           persist-credentials: false
@@ -245,7 +245,7 @@ jobs:
       # Kept as long as the run can be re-run (30 days), like the binaries.
       # overwrite: "Re-run all jobs" bumps afresh and bundles another commit.
       - name: Upload the release commit
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-commit
           path: ${{ runner.temp }}/release.bundle
@@ -302,13 +302,13 @@ jobs:
       # The release commit is not in the repository yet: check out its
       # parent, which main has, and lay the bundled commit on top.
       - name: Checkout the release commit's parent
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.bump.outputs.parent }}
           persist-credentials: false
 
       - name: Download the release commit
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-commit
           path: ${{ runner.temp }}/release-commit
@@ -367,7 +367,7 @@ jobs:
           ls -l assets
 
       - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
 
@@ -406,7 +406,7 @@ jobs:
       # "Re-run all jobs", the binaries of the new release commit replace
       # those of the attempt that failed.
       - name: Upload the packaged binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: asset-${{ matrix.target }}
           path: assets/*
@@ -431,13 +431,13 @@ jobs:
       contents: read # the push uses the app token, not GITHUB_TOKEN
     steps:
       - name: Checkout main
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           persist-credentials: false
 
       - name: Download the release commit
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-commit
           path: ${{ runner.temp }}/release-commit
@@ -520,13 +520,13 @@ jobs:
       id-token: write # npm and crates.io trusted publishing (OIDC)
     steps:
       - name: Checkout the released tag
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: v${{ needs.bump.outputs.version }}
           persist-credentials: false
 
       - name: Download the packaged binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: asset-*
           merge-multiple: true
@@ -614,7 +614,7 @@ jobs:
         run: cargo publish --locked --no-verify
 
       - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
 
