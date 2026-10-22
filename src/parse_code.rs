@@ -1461,6 +1461,15 @@ mod tests {
     }
 
     #[test]
+    fn a_forwarding_tag_glued_to_a_scheme_shaped_token_is_recognized() {
+        let (items, problems, forwards) =
+            parse("src.ts", &["const x = note://[req:a#1 --> dsn:b#1];"]);
+        assert_eq!(problems.len(), 0);
+        assert_eq!(items.len(), 0);
+        assert_eq!(forwards, [forward("req:a#1", "dsn:b#1", "src.ts", 1, 18)]);
+    }
+
+    #[test]
     fn a_forwarding_tag_does_not_anchor_subsequent_need_tags() {
         let (items, problems, _) =
             parse("src.ts", &["// [req:a#1 --> dsn:b#1]", "// [>>utest:a#1]"]);
