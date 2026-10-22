@@ -1,0 +1,22 @@
+name: Manual CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Git ref to validate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osc-manual-${{ inputs.target_ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    uses: ./.github/workflows/osc-adv-node-matrix.yml
+    with:
+      target_ref: ${{ inputs.target_ref }}

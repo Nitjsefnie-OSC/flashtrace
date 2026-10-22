@@ -1,0 +1,195 @@
+name: Node matrix validation
+
+on:
+  workflow_call:
+    inputs:
+      target_ref:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  npm-packages:
+    name: npm launcher packages
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node: 22
+          - node: 24
+          - node: 26
+    permissions:
+      contents: read # checkout only; the checks run locally
+    steps:
+      # Resolve the target before the checkout action so the first step can
+      # print the exact commit being validated.
+      - name: Record target provenance
+        env:
+          TARGET_REF: ${{ inputs.target_ref }}
+        run: |
+          git init .
+          git remote add origin https://github.com/Nitjsefnie-OSC/flashtrace.git
+          git fetch --no-tags --depth=1 origin "$TARGET_REF"
+          git checkout --detach FETCH_HEAD
+          echo "target_ref=$TARGET_REF"
+          echo "HEAD=$(git rev-parse HEAD)"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Nitjsefnie-OSC/flashtrace
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Parse the launcher
+        run: node --check npm/flashtrace/bin/flashtrace.js
+
+      # Only the launcher's contents are checked below; the platform
+      # tarballs are checked by the npm smoke test in the test job.
+      - name: Verify every package packs
+        run: |
+          for package in npm/flashtrace npm/@flashtrace/*; do
+            (cd "$package" && npm pack --dry-run)
+          done
+
+      # npm pack succeeds whatever "files" matches, so the launcher's tarball
+      # is checked for what a user needs, the prepack-copied README and
+      # LICENSE included
+      - name: Verify the launcher tarball contents
+        run: |
+          files=$(cd npm/flashtrace && npm pack --dry-run --json \
+            | node -p "JSON.parse(require('fs').readFileSync(0))[0].files.map((file) => file.path).join(' ')")
+          echo "packed: $files"
+          status=0
+          for expected in LICENSE README.md bin/flashtrace.js package.json; do
+            case " $files " in
+              *" $expected "*) ;;
+              *) echo "::error::$expected is missing from the launcher tarball"; status=1 ;;
+            esac
+          done
+          exit $status
+
+      - name: Run the launcher against a stub binary
+        run: |
+          stub_dir=npm/flashtrace/node_modules/@flashtrace/linux-x64/bin
+          mkdir --parents "$stub_dir"
+          printf '#!/bin/sh\necho "stub ran: $@"\nexit 42\n' > "$stub_dir/flashtrace"
+          chmod +x "$stub_dir/flashtrace"
+          set +e
+          output=$(node npm/flashtrace/bin/flashtrace.js --json 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          test "$status" = 42
+          test "$output" = "stub ran: --json"
+
+      - name: Run the launcher without a platform package
+        run: |
+          rm -rf npm/flashtrace/node_modules
+          set +e
+          output=$(node npm/flashtrace/bin/flashtrace.js --version 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          test "$status" = 2
+          case "$output" in
+            "flashtrace: no prebuilt binary for linux-x64."*) ;;
+            *) echo "::error::the launcher did not explain the missing binary"; exit 1 ;;
+          esac
+
+      # a binary killed by a signal kills the launcher with the same one, so
+      # the shell reports 128 + 15 for SIGTERM rather than a plain failure
+      - name: Run the launcher against a stub binary killed by SIGTERM
+        run: |
+          stub_dir=npm/flashtrace/node_modules/@flashtrace/linux-x64/bin
+          mkdir --parents "$stub_dir"
+          printf '#!/bin/sh\nkill -TERM $$\n' > "$stub_dir/flashtrace"
+          chmod +x "$stub_dir/flashtrace"
+          set +e
+          node npm/flashtrace/bin/flashtrace.js
+          status=$?
+          set -e
+          rm -rf npm/flashtrace/node_modules
+          echo "exit $status"
+          test "$status" = 143
+
+  npm-smoke-build:
+    name: Build the npm smoke-test binary
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout only; the build runs locally
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Nitjsefnie-OSC/flashtrace
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+
+      - name: Add the target
+        run: rustup target add x86_64-unknown-linux-musl
+
+      - name: Install the musl C compiler
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends musl-tools
+
+      - name: Build the binary
+        run: cargo build --locked --target x86_64-unknown-linux-musl
+
+      - name: Upload the binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-smoke-binary
+          path: target/x86_64-unknown-linux-musl/debug/flashtrace
+          if-no-files-found: error
+          retention-days: 1
+
+  npm-smoke:
+    name: npm smoke test on Node ${{ matrix.node }}
+    needs: npm-smoke-build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node: 22
+          - node: 24
+          - node: 26
+    permissions:
+      contents: read # checkout only; the smoke test runs locally
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Nitjsefnie-OSC/flashtrace
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Download the binary
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: npm-smoke-binary
+          path: target/x86_64-unknown-linux-musl/debug
+
+      # Artifact downloads do not preserve executable permissions.
+      - name: Make the binary executable
+        run: chmod +x target/x86_64-unknown-linux-musl/debug/flashtrace
+
+      - name: Smoke-test the npm packages with the built binary
+        run: node .github/scripts/npm-smoke-test.mjs "target/x86_64-unknown-linux-musl/debug/flashtrace"
+
