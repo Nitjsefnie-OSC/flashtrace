@@ -103,6 +103,43 @@ fn impact_wildcard_classification_changes_only_with_another_matching_revision() 
 }
 
 #[test]
+fn impact_wildcard_counts_canonical_revisions_instead_of_definitions() {
+    for (name, revisions, expected) in [
+        (
+            "impact-duplicate-last",
+            vec!["// [impl:login#2.4]", "// [impl:login#02.04.0]"],
+            "        needs impl:login#2.x (→ impl:login#2.4)  wildcard-last — breaks on bump; same-pattern replacement heals it",
+        ),
+        (
+            "impact-duplicate-tolerant",
+            vec![
+                "// [impl:login#2.4]",
+                "// [impl:login#02.04.0]",
+                "// [impl:login#2.5]",
+            ],
+            "        needs impl:login#2.x (→ impl:login#2.4)  tolerant (also matched by #2.5)",
+        ),
+    ] {
+        let project = with_project(
+            name,
+            &[
+                ("spec.md", &["`req:login#1`", "", "Needs: impl:login#2.x"]),
+                ("login.ts", &revisions),
+            ],
+        );
+        let result = run(&project, &["--impact", "impl:login#2.4"]);
+        assert_eq!(result.status.code(), Some(0), "{}", stderr(&result));
+        assert_eq!(stderr(&result), "");
+        assert_eq!(
+            stdout(&result),
+            format!(
+                "impact of impl:login#2.4  login.ts:1  (1 direct, 0 transitive)\n\n  direct\n    req:login#1  spec.md:1\n{expected}\n"
+            )
+        );
+    }
+}
+
+#[test]
 fn impact_cover_is_a_direct_dependency_even_when_coverage_is_defective() {
     let project = with_project(
         "impact-cover",
@@ -213,6 +250,40 @@ fn impact_transitive_closure_is_cycle_safe_and_lists_each_item_once() {
             "  transitive\n",
             "    req:middle#1  spec.md:5  via req:direct#1\n",
             "    req:top#1  spec.md:9  via req:middle#1\n"
+        )
+    );
+}
+
+#[test]
+fn impact_shortest_path_predecessor_wins_in_a_cycle_with_unequal_paths() {
+    let project = with_project(
+        "impact-shortest-path-cycle",
+        &[(
+            "graph.ts",
+            &[
+                "// [impl:login#2.4] [>>req:z#1]",
+                "// [req:a#1] [>>impl:login#2.4]",
+                "// [req:b#1] [>>impl:login#2.4]",
+                "// [req:c#1] [>>req:b#1]",
+                "// [req:z#1] [>>req:a#1] [>>req:c#1]",
+            ],
+        )],
+    );
+    let result = run(&project, &["--impact", "impl:login#2.4"]);
+    assert_eq!(result.status.code(), Some(0), "{}", stderr(&result));
+    assert_eq!(stderr(&result), "");
+    assert_eq!(
+        stdout(&result),
+        concat!(
+            "impact of impl:login#2.4  graph.ts:1  (2 direct, 2 transitive)\n\n",
+            "  direct\n",
+            "    req:a#1  graph.ts:2\n",
+            "        needs impl:login#2.4  exact — breaks on bump\n",
+            "    req:b#1  graph.ts:3\n",
+            "        needs impl:login#2.4  exact — breaks on bump\n",
+            "  transitive\n",
+            "    req:c#1  graph.ts:4  via req:b#1\n",
+            "    req:z#1  graph.ts:5  via req:a#1\n"
         )
     );
 }
