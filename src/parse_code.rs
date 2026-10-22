@@ -69,7 +69,8 @@ struct UrlSpan {
 }
 
 // spans of URL-shaped text in a line, in order. Comment *openers* inside a
-// span are ignored (see marker_index), so the `//`, `#`, `--` or `/*` of e.g.
+// span are ignored unless they end at a complete annotation (see
+// marker_index), so the `//`, `#`, `--` or `/*` of e.g.
 // `https://example.com/a--b#anchor` cannot open a phantom comment. Block
 // *closers* are still honoured inside URLs: skipping a closer could leave a
 // block comment open far past its real end, which is worse than the phantom
@@ -87,9 +88,9 @@ fn url_spans(line: &str) -> Vec<UrlSpan> {
         .collect()
 }
 
-// first index of `marker` at or after pos that lies outside every URL span,
-// or None. Spans are in ascending order and the index only moves forward, so
-// a single pass over the spans suffices.
+// first index of `marker` at or after pos outside every URL span, or ending
+// exactly at a span's end before a complete annotation. Spans are in ascending
+// order and the index only moves forward, so a single pass suffices.
 fn marker_index(line: &str, marker: &str, pos: usize, spans: &[UrlSpan]) -> Option<usize> {
     let find_from = |from: usize| {
         line.get(from..)
@@ -100,6 +101,16 @@ fn marker_index(line: &str, marker: &str, pos: usize, spans: &[UrlSpan]) -> Opti
         match idx {
             None => break,
             Some(found) if found < span.start => break,
+            Some(found)
+                if found + marker.len() == span.end
+                    && [&*TAG_RE, &*FORWARD_RE].iter().any(|pattern| {
+                        pattern
+                            .find_at(line, span.end)
+                            .is_some_and(|m| m.start() == span.end)
+                    }) =>
+            {
+                break;
+            }
             Some(found) if found < span.end => idx = find_from(span.end),
             Some(_) => {}
         }
@@ -853,8 +864,41 @@ mod tests {
     }
 
     #[test]
-    fn a_comment_opener_glued_to_a_scheme_shaped_token_is_missed_known_limitation() {
+    fn a_comment_opener_glued_to_a_scheme_shaped_token_is_recognized() {
         let (items, _, _) = parse("src.ts", &["const x = 1; note://[impl:missed#1]"]);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "impl:missed#1");
+        assert_eq!(items[0].line, 1);
+        assert_eq!(items[0].character, 21);
+    }
+
+    #[test]
+    fn a_comment_opener_glued_to_a_custom_scheme_is_recognized() {
+        let (items, _, _) = parse("src.ts", &["x-scheme+1.0://[impl:a#1]"]);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "impl:a#1");
+        assert_eq!(items[0].line, 1);
+        assert_eq!(items[0].character, 16);
+    }
+
+    #[test]
+    fn a_bracketed_ipv6_url_does_not_open_a_comment() {
+        let (items, _, _) = parse("src.ts", &["http://[::1]:8080/"]);
+        assert_eq!(items.len(), 0);
+    }
+
+    #[test]
+    fn a_tag_after_an_ipv6_authority_does_not_open_a_comment() {
+        let (items, _, _) = parse("src.ts", &["http://[::1]:8080/[impl:phantom#1]"]);
+        assert_eq!(items.len(), 0);
+    }
+
+    #[test]
+    fn a_tag_after_a_url_path_in_a_string_does_not_open_a_comment() {
+        let (items, _, _) = parse(
+            "src.ts",
+            &["fetch(\"https://example.com/api[impl:phantom#1]\")"],
+        );
         assert_eq!(items.len(), 0);
     }
 
