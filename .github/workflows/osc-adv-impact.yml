@@ -1,0 +1,143 @@
+name: Impact claim validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Git ref to validate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: osc-adv-impact-${{ inputs.target_ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Format and lint
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout only; rustfmt and clippy run locally
+    steps:
+      # Resolve the target before the checkout action so the first step can
+      # print the exact commit being validated.
+      - name: Record target provenance
+        env:
+          TARGET_REF: ${{ inputs.target_ref }}
+        run: |
+          git init .
+          git remote add origin https://github.com/Nitjsefnie-OSC/flashtrace.git
+          git fetch --no-tags --depth=1 origin "$TARGET_REF"
+          git checkout --detach FETCH_HEAD
+          echo "target_ref=$TARGET_REF"
+          echo "head=$(git rev-parse HEAD)"
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Nitjsefnie-OSC/flashtrace
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+
+      # rustup is preinstalled on every GitHub runner and installs the exact
+      # toolchain rust-toolchain.toml pins on first use
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+  # Cargo.toml's rust-version is a promise to everyone building the crate
+  # from source; clippy's incompatible_msrv only catches newer std APIs, so
+  # this proves newer language features and dependency updates keep it too.
+  minimum-rust:
+    name: Test on the minimum supported Rust
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout only; the tests run locally
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Nitjsefnie-OSC/flashtrace
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+
+      - name: Install the toolchain Cargo.toml names
+        run: |
+          version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          test -n "$version"
+          rustup toolchain install "$version" --profile minimal
+          echo "MINIMUM_RUST=$version" >> "$GITHUB_ENV"
+
+      # +toolchain overrides the rust-toolchain.toml pin
+      - name: Test on the minimum supported Rust
+        run: cargo "+$MINIMUM_RUST" test --locked
+
+  test:
+    name: Test ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # the primary Linux target the release builds; the remaining release
+      # targets run in the repository's own pull_request CI
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-26.04
+    permissions:
+      contents: read # checkout only; the tests run locally
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Nitjsefnie-OSC/flashtrace
+          ref: ${{ inputs.target_ref }}
+          persist-credentials: false
+
+      - name: Add the target
+        run: rustup target add ${{ matrix.target }}
+
+      # musl-gcc for mimalloc, the musl targets' allocator (see main.rs) and
+      # their one piece of C; the release build installs it the same way
+      - name: Install the musl C compiler
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends musl-tools
+
+      - name: Test on the target
+        run: cargo test --locked --target ${{ matrix.target }}
+
+      # The musl binaries must stay static: one linked dynamically still
+      # passes every test here, but cannot start on a glibc system, which has
+      # no musl loader. C dependencies such as mimalloc are what could change
+      # that. The release checks the binary it ships the same way.
+      - name: Check the binary is statically linked
+        if: contains(matrix.target, 'musl')
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          linkage=$(file --brief "target/$TARGET/debug/flashtrace")
+          echo "$linkage"
+          if ! grep -q static <<< "$linkage"; then
+            echo "::error::the $TARGET binary is not statically linked"
+            exit 1
+          fi
+
+      # Cargo.toml's include list decides what ships; a build script missing
+      # from it is dropped from the crate without an error, and crates.io
+      # builds would then link the VC runtime dynamically. The packaged crate
+      # is also built from its own files here.
+      - name: Verify the crate packages
+        run: |
+          files=$(cargo package --locked --list)
+          if ! grep -qx build.rs <<< "$files"; then
+            echo "::error::build.rs is missing from the packaged crate"
+            exit 1
+          fi
+          cargo package --locked
