@@ -53,8 +53,9 @@ static FORWARD_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(&forward_src())
 // The scheme repetition is bounded so a long run of scheme-valid characters
 // with no :// cannot force super-linear backtracking; 63 clears every real
 // scheme (RFC 3986 and reverse-DNS custom schemes stay well under it).
+// The capture contains the URL text after the scheme prefix.
 static URL_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"[A-Za-z][A-Za-z0-9+.-]{0,63}://[^\s"'`<>\[\]]*"#).unwrap());
+    LazyLock::new(|| Regex::new(r#"[A-Za-z][A-Za-z0-9+.-]{0,63}://([^\s"'`<>\[\]]*)"#).unwrap());
 
 // the 1-based column of a byte offset into a line, counted in characters
 // (Unicode scalar values)
@@ -66,11 +67,12 @@ fn character_column(line: &str, byte_offset: usize) -> usize {
 struct UrlSpan {
     start: usize,
     end: usize,
+    scheme_only: bool,
 }
 
 // spans of URL-shaped text in a line, in order. Comment *openers* inside a
-// span are ignored unless they end at a complete annotation (see
-// marker_index), so the `//`, `#`, `--` or `/*` of e.g.
+// span are ignored except for a scheme-only span immediately before a complete
+// annotation (see marker_index), so the `//`, `#`, `--` or `/*` of e.g.
 // `https://example.com/a--b#anchor` cannot open a phantom comment. Block
 // *closers* are still honoured inside URLs: skipping a closer could leave a
 // block comment open far past its real end, which is worse than the phantom
@@ -80,17 +82,21 @@ fn url_spans(line: &str) -> Vec<UrlSpan> {
         return Vec::new();
     }
     URL_RE
-        .find_iter(line)
-        .map(|m| UrlSpan {
-            start: m.start(),
-            end: m.end(),
+        .captures_iter(line)
+        .map(|captures| {
+            let url = captures.get(0).unwrap();
+            UrlSpan {
+                start: url.start(),
+                end: url.end(),
+                scheme_only: captures.get(1).unwrap().as_str().is_empty(),
+            }
         })
         .collect()
 }
 
-// first index of `marker` at or after pos outside every URL span, or ending
-// exactly at a span's end before a complete annotation. Spans are in ascending
-// order and the index only moves forward, so a single pass suffices.
+// first index of `marker` at or after pos outside every URL span, or the
+// scheme's own marker directly before a complete annotation. Spans are in
+// ascending order and the index only moves forward, so a single pass suffices.
 fn marker_index(line: &str, marker: &str, pos: usize, spans: &[UrlSpan]) -> Option<usize> {
     let find_from = |from: usize| {
         line.get(from..)
@@ -102,7 +108,8 @@ fn marker_index(line: &str, marker: &str, pos: usize, spans: &[UrlSpan]) -> Opti
             None => break,
             Some(found) if found < span.start => break,
             Some(found)
-                if found + marker.len() == span.end
+                if span.scheme_only
+                    && found + marker.len() == span.end
                     && [&*TAG_RE, &*FORWARD_RE].iter().any(|pattern| {
                         pattern
                             .find_at(line, span.end)
@@ -898,6 +905,24 @@ mod tests {
         let (items, _, _) = parse(
             "src.ts",
             &["fetch(\"https://example.com/api[impl:phantom#1]\")"],
+        );
+        assert_eq!(items.len(), 0);
+    }
+
+    #[test]
+    fn a_block_opener_at_a_url_path_end_does_not_open_a_comment() {
+        let (items, _, _) = parse(
+            "src.ts",
+            &["fetch(\"https://example.com/api/*[impl:phantom#1]\")"],
+        );
+        assert_eq!(items.len(), 0);
+    }
+
+    #[test]
+    fn a_hash_at_a_url_fragment_start_does_not_open_a_comment() {
+        let (items, _, _) = parse(
+            "app.py",
+            &["x = \"https://example.com/path#[impl:phantom#1]\""],
         );
         assert_eq!(items.len(), 0);
     }
